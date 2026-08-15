@@ -719,13 +719,20 @@ private func pngSize(_ data: Data) -> (width: Int, height: Int)? {
     #expect(risky.percentText == "93%")
     #expect(risky.amountText == "$93.00 / $100.00")
     #expect(risky.remainingText == "$7.00 left")
+    #expect(risky.remainingWithResetText == "$7.00 left (resets in 2h)")
     #expect(risky.resetText == "Resets in 2h")
     #expect(risky.severity == .warning)
     #expect(unavailable.percentText == "--")
     #expect(unavailable.amountText == "--")
     #expect(unavailable.remainingText == "Limit not available")
+    #expect(unavailable.remainingWithResetText == "Limit not available")
     #expect(unavailable.resetText == nil)
     #expect(unavailable.severity == .healthy)
+}
+
+@Test func countdownDurationUsesTwoUnitsForLongResetWindows() {
+    #expect(StatusFormatters.countdownDuration(seconds: 7_200) == "2h")
+    #expect(StatusFormatters.countdownDuration(seconds: 97_200) == "1d 3h")
 }
 
 @Test func subscriptionSummaryDecodesUsdUsageIntoProgress() throws {

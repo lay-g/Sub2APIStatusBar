@@ -959,6 +959,13 @@ public struct QuotaWindowDisplay: Equatable, Sendable {
         return "\(StatusFormatters.currency(max(limit - used, 0))) left"
     }
 
+    public var remainingWithResetText: String {
+        guard used != nil, limit != nil, let resetInSeconds else {
+            return remainingText
+        }
+        return "\(remainingText) (resets in \(StatusFormatters.countdownDuration(seconds: resetInSeconds)))"
+    }
+
     public var resetText: String? {
         resetInSeconds.map { "Resets in \(StatusFormatters.duration(seconds: $0))" }
     }
