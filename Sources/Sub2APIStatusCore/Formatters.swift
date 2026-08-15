@@ -71,6 +71,24 @@ public enum StatusFormatters {
         return "\(seconds)s"
     }
 
+    public static func countdownDuration(seconds: Double) -> String {
+        let seconds = max(Int(seconds.rounded(.down)), 0)
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = (seconds % 3_600) / 60
+
+        if days > 0 {
+            return hours > 0 ? "\(days)d \(hours)h" : "\(days)d"
+        }
+        if hours > 0 {
+            return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h"
+        }
+        if minutes > 0 {
+            return "\(minutes)m"
+        }
+        return "\(seconds)s"
+    }
+
     public static func relativeAge(seconds: Double) -> String {
         let clamped = max(seconds, 0)
         if clamped >= 3_600 {

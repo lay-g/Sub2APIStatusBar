@@ -57,7 +57,7 @@ struct SubscriptionQuotaCard: View {
         HStack(spacing: 8) {
             Label(bestWindow.percentText, systemImage: "gauge.with.dots.needle.67percent")
                 .foregroundStyle(tint(for: bestWindow.severity))
-            Text(bestWindow.remainingText)
+            Text(bestWindow.remainingWithResetText)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -121,19 +121,13 @@ struct QuotaProgressRow: View {
             ProgressView(value: window.normalizedProgress)
                 .tint(tint)
 
-            HStack {
-                Text(window.remainingText)
-                Spacer()
-                if let resetText = window.resetText {
-                    Text(resetText)
-                }
-            }
+            Text(window.remainingWithResetText)
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .minimumScaleFactor(0.75)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(window.title) quota \(window.percentText), \(window.remainingText)")
+            .accessibilityLabel("\(window.title) quota \(window.percentText), \(window.remainingWithResetText)")
         }
     }
 }
