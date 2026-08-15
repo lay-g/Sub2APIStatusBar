@@ -40,6 +40,10 @@ public struct Sub2APIClient: Sendable {
         try await get("/subscriptions/summary")
     }
 
+    public func subscriptions() async throws -> [SubscriptionDetail] {
+        try await get("/subscriptions")
+    }
+
     public func refreshToken(_ refreshToken: String) async throws -> AuthResponse {
         struct RefreshRequest: Encodable, Sendable {
             let refreshToken: String

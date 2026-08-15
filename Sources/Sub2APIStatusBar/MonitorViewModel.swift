@@ -86,12 +86,15 @@ final class MonitorViewModel: ObservableObject {
     private func userSnapshot(client: Sub2APIClient) async throws -> MonitorSnapshot {
         let currentUser = try? await client.currentUser().user
         async let summaryTask = client.subscriptionSummary()
+        async let detailsTask = client.subscriptions()
         async let statsTask = client.usageDashboardStats()
         let range = Self.lastSevenDayRange()
         async let trendTask = client.usageDashboardTrend(startDate: range.start, endDate: range.end, granularity: "day")
         async let modelsTask = client.usageDashboardModels(startDate: range.start, endDate: range.end)
 
-        let summary = try await summaryTask
+        var summary = try await summaryTask
+        let details = try? await detailsTask
+        summary.applyResetWindows(from: details ?? [])
         let stats = try? await statsTask
         let trend = try? await trendTask
         let models = try? await modelsTask

@@ -719,20 +719,57 @@ private func pngSize(_ data: Data) -> (width: Int, height: Int)? {
     #expect(risky.percentText == "93%")
     #expect(risky.amountText == "$93.00 / $100.00")
     #expect(risky.remainingText == "$7.00 left")
-    #expect(risky.remainingWithResetText == "$7.00 left (resets in 2h)")
     #expect(risky.resetText == "Resets in 2h")
     #expect(risky.severity == .warning)
     #expect(unavailable.percentText == "--")
     #expect(unavailable.amountText == "--")
     #expect(unavailable.remainingText == "Limit not available")
-    #expect(unavailable.remainingWithResetText == "Limit not available")
     #expect(unavailable.resetText == nil)
     #expect(unavailable.severity == .healthy)
 }
 
-@Test func countdownDurationUsesTwoUnitsForLongResetWindows() {
-    #expect(StatusFormatters.countdownDuration(seconds: 7_200) == "2h")
-    #expect(StatusFormatters.countdownDuration(seconds: 97_200) == "1d 3h")
+@Test func subscriptionDetailComputesResetCountdownsFromWindowStarts() throws {
+    let detail = SubscriptionDetail(
+        id: 5,
+        dailyWindowStart: "2026-08-15T00:00:00+08:00",
+        weeklyWindowStart: "2026-08-13T00:00:00+08:00",
+        monthlyWindowStart: "2026-08-13T00:00:00+08:00"
+    )
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-08-15T13:55:00+08:00"))
+
+    let resets = detail.resetInSeconds(now: now)
+
+    #expect(resets.daily == 36_300)          // 到 08-16 00:00 +08，10h05m
+    #expect(resets.weekly == 381_900)         // 到 08-20 00:00 +08，4d10h05m
+    #expect(resets.monthly == 2_455_500)      // 到 09-13 00:00 +08（28d10h05m），月度加月在 +08 时区里算
+}
+
+@Test func subscriptionDetailMonthlyResetClampsShortMonthsInAnchorTimezone() throws {
+    let detail = SubscriptionDetail(id: 1, monthlyWindowStart: "2026-01-31T00:00:00+08:00")
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-01-31T12:00:00+08:00"))
+
+    #expect(detail.resetInSeconds(now: now).monthly == 2_376_000)  // 01-31 +1月 → 02-28 00:00 +08
+}
+
+@Test func subscriptionSummaryAppliesResetWindowsFromSubscriptionDetails() throws {
+    let json = """
+    {
+      "active_count": 1,
+      "subscriptions": [
+        {"id": 5, "group_name": "1/4额度", "status": "active", "daily_used_usd": 1, "daily_limit_usd": 300}
+      ]
+    }
+    """.data(using: .utf8)!
+    var summary = try JSONDecoder.sub2api.decode(SubscriptionSummary.self, from: json)
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-08-15T13:55:00+08:00"))
+
+    summary.applyResetWindows(
+        from: [SubscriptionDetail(id: 5, dailyWindowStart: "2026-08-15T00:00:00+08:00")],
+        now: now
+    )
+
+    #expect(summary.subscriptions.first?.dailyResetInSeconds == 36_300)
+    #expect(summary.subscriptions.first?.weeklyResetInSeconds == nil)
 }
 
 @Test func subscriptionSummaryDecodesUsdUsageIntoProgress() throws {

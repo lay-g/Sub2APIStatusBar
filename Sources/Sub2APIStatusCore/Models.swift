@@ -767,7 +767,7 @@ public struct AccountHealthSummary: Equatable, Sendable {
 public struct SubscriptionSummary: Decodable, Equatable, Sendable {
     public let activeCount: Int
     public let totalUsedUSD: Double
-    public let subscriptions: [SubscriptionSummaryItem]
+    public var subscriptions: [SubscriptionSummaryItem]
 
     public init(activeCount: Int, totalUsedUSD: Double = 0, subscriptions: [SubscriptionSummaryItem]) {
         self.activeCount = activeCount
@@ -804,6 +804,92 @@ public struct SubscriptionSummary: Decodable, Equatable, Sendable {
     }
 }
 
+/// GET /subscriptions 的条目，窗口起点由服务端锚定（管理员改额度会重锚），
+/// reset 倒计时只能用 window_start + 窗口长度在客户端现算。
+public struct SubscriptionDetail: Decodable, Equatable, Sendable {
+    public let id: Int64
+    public let dailyWindowStart: String?
+    public let weeklyWindowStart: String?
+    public let monthlyWindowStart: String?
+
+    public init(
+        id: Int64,
+        dailyWindowStart: String? = nil,
+        weeklyWindowStart: String? = nil,
+        monthlyWindowStart: String? = nil
+    ) {
+        self.id = id
+        self.dailyWindowStart = dailyWindowStart
+        self.weeklyWindowStart = weeklyWindowStart
+        self.monthlyWindowStart = monthlyWindowStart
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case dailyWindowStart
+        case weeklyWindowStart
+        case monthlyWindowStart
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(Int64.self, forKey: .id) ?? 0
+        dailyWindowStart = try container.decodeIfPresent(String.self, forKey: .dailyWindowStart)
+        weeklyWindowStart = try container.decodeIfPresent(String.self, forKey: .weeklyWindowStart)
+        monthlyWindowStart = try container.decodeIfPresent(String.self, forKey: .monthlyWindowStart)
+    }
+
+    /// 解析 ISO8601 窗口起点，保留原始时区偏移（月度加月需要在对齐时区里算）。
+    private static func parseWindowStart(_ raw: String?) -> (date: Date, offsetSeconds: Int)? {
+        guard let raw,
+              let date = ISO8601DateFormatter().date(from: raw) else {
+            return nil
+        }
+        guard let timeSeparator = raw.firstIndex(of: "T"),
+              let offsetStart = raw[timeSeparator...].firstIndex(where: { $0 == "+" || $0 == "-" }) else {
+            return (date, 0)
+        }
+        let wall = raw[..<offsetStart] + "Z"
+        guard let wallDate = ISO8601DateFormatter().date(from: String(wall)) else {
+            return nil
+        }
+        return (date, Int(wallDate.timeIntervalSince(date).rounded()))
+    }
+
+    private static func countdown(from start: Date, duration: TimeInterval, now: Date) -> Double? {
+        let remaining = start.addingTimeInterval(duration).timeIntervalSince(now)
+        return remaining > 0 ? remaining : nil
+    }
+
+    public func resetInSeconds(now: Date = Date()) -> (daily: Double?, weekly: Double?, monthly: Double?) {
+        let daily = Self.parseWindowStart(dailyWindowStart).flatMap { Self.countdown(from: $0.date, duration: 86_400, now: now) }
+        let weekly = Self.parseWindowStart(weeklyWindowStart).flatMap { Self.countdown(from: $0.date, duration: 604_800, now: now) }
+        let monthly = Self.parseWindowStart(monthlyWindowStart).flatMap { parsed -> Double? in
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(secondsFromGMT: parsed.offsetSeconds) ?? .current
+            guard let next = calendar.date(byAdding: .month, value: 1, to: parsed.date) else {
+                return nil
+            }
+            let remaining = next.timeIntervalSince(now)
+            return remaining > 0 ? remaining : nil
+        }
+        return (daily, weekly, monthly)
+    }
+}
+
+public extension SubscriptionSummary {
+    /// 把 /subscriptions 的窗口起点换算成倒计时秒数，按订阅 id 合入 summary。
+    mutating func applyResetWindows(from details: [SubscriptionDetail], now: Date = Date()) {
+        let resetsByID = Dictionary(details.map { ($0.id, $0.resetInSeconds(now: now)) }, uniquingKeysWith: { first, _ in first })
+        for index in subscriptions.indices {
+            guard let resets = resetsByID[subscriptions[index].id] else { continue }
+            subscriptions[index].dailyResetInSeconds = resets.daily
+            subscriptions[index].weeklyResetInSeconds = resets.weekly
+            subscriptions[index].monthlyResetInSeconds = resets.monthly
+        }
+    }
+}
+
 public struct SubscriptionSummaryItem: Decodable, Identifiable, Equatable, Sendable {
     public let id: Int64
     public let groupName: String
@@ -814,9 +900,9 @@ public struct SubscriptionSummaryItem: Decodable, Identifiable, Equatable, Senda
     public let weeklyLimitUSD: Double?
     public let monthlyUsedUSD: Double?
     public let monthlyLimitUSD: Double?
-    public let dailyResetInSeconds: Double?
-    public let weeklyResetInSeconds: Double?
-    public let monthlyResetInSeconds: Double?
+    public var dailyResetInSeconds: Double?
+    public var weeklyResetInSeconds: Double?
+    public var monthlyResetInSeconds: Double?
     public let dailyProgress: Double?
     public let weeklyProgress: Double?
     public let monthlyProgress: Double?
@@ -957,13 +1043,6 @@ public struct QuotaWindowDisplay: Equatable, Sendable {
             return "Limit not available"
         }
         return "\(StatusFormatters.currency(max(limit - used, 0))) left"
-    }
-
-    public var remainingWithResetText: String {
-        guard used != nil, limit != nil, let resetInSeconds else {
-            return remainingText
-        }
-        return "\(remainingText) (resets in \(StatusFormatters.countdownDuration(seconds: resetInSeconds)))"
     }
 
     public var resetText: String? {
