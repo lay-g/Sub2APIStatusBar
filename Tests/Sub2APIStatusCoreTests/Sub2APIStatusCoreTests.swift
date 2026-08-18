@@ -648,9 +648,9 @@ private func pngSize(_ data: Data) -> (width: Int, height: Int)? {
 }
 
 @Test func compactNumberFormatsLargeUnits() {
-    #expect(StatusFormatters.compactNumber(1_000_000) == "1.0M")
-    #expect(StatusFormatters.compactNumber(1_260_000_000) == "1.3B")
-    #expect(StatusFormatters.compactNumber(1_260_000_000_000) == "1.3T")
+    #expect(StatusFormatters.compactNumber(1_000_000) == "1.000M")
+    #expect(StatusFormatters.compactNumber(1_260_000_000) == "1.260B")
+    #expect(StatusFormatters.compactNumber(1_260_000_000_000) == "1.260T")
 }
 
 @Test func costPerMillionTokensFormatsUnitEconomics() {
@@ -671,7 +671,7 @@ private func pngSize(_ data: Data) -> (width: Int, height: Int)? {
     #expect(displays[0].model == "gpt-5.5")
     #expect(displays[0].costShareText == "73% cost")
     #expect(displays[0].costPerMillionTokensText == "$0.5059/MTok")
-    #expect(displays[0].tokenMixText == "In 120.0M / Out 50.0M")
+    #expect(displays[0].tokenMixText == "In 120.000M / Out 50.000M")
     #expect(displays[0].costProgress == 1)
     #expect(displays[1].costShareText == "27% cost")
     #expect(displays[1].costProgress > 0.36)
@@ -1441,12 +1441,12 @@ private func pngSize(_ data: Data) -> (width: Int, height: Int)? {
     #expect(report.contains("Account: Das <das@example.com>"))
     #expect(report.contains("Balance: $300.00"))
     #expect(report.contains("Today Spend: $117.5668"))
-    #expect(report.contains("Today Tokens: 126.4M"))
-    #expect(report.contains("Input 7.7M / Output 536.1K / Cache Read 118.2M"))
+    #expect(report.contains("Today Tokens: 126.386M"))
+    #expect(report.contains("Input 7.657M / Output 536.1K / Cache Read 118.193M"))
     #expect(report.contains("Cost / MTok: $0.9302/MTok"))
     #expect(report.contains("Codex daily quota: 93%, resets in 2h"))
-    #expect(report.contains("Trend 2026-05-18: 1186 requests, 126.4M tokens, $117.5668"))
-    #expect(report.contains("Top Models: gpt-5.5 $86.0000 (170.0M tokens), gpt-5.4 $31.5668 (40.0M tokens)"))
+    #expect(report.contains("Trend 2026-05-18: 1186 requests, 126.386M tokens, $117.5668"))
+    #expect(report.contains("Top Models: gpt-5.5 $86.0000 (170.000M tokens), gpt-5.4 $31.5668 (40.000M tokens)"))
     #expect(report.contains("Insight: Codex daily quota is at 93% and resets in 2h."))
     #expect(report.contains("secret-access-token") == false)
     #expect(report.contains("secret-refresh-token") == false)
@@ -1562,8 +1562,8 @@ private func pngSize(_ data: Data) -> (width: Int, height: Int)? {
         now: Date(timeIntervalSince1970: 1_060)
     )
 
-    #expect(summary.title == "126.4M AI tokens today")
-    #expect(summary.primaryMetric == "126.4M")
+    #expect(summary.title == "126.386M AI tokens today")
+    #expect(summary.primaryMetric == "126.386M")
     #expect(summary.primaryLabel == "AI tokens today")
     #expect(summary.spendText == "$117.57")
     #expect(summary.requestsText == "1186")
@@ -1576,7 +1576,7 @@ private func pngSize(_ data: Data) -> (width: Int, height: Int)? {
     #expect(summary.privacyText == "No prompts. No keys.")
     #expect(summary.skylineValues == [0.63, 0.71, 0.79, 0.87, 0.79, 0.71, 1.0])
     #expect(summary.flexBadges == ["$117.57", "gpt-5.5", "93% quota"])
-    #expect(summary.shareText.contains("126.4M AI tokens today"))
+    #expect(summary.shareText.contains("126.386M AI tokens today"))
     #expect(summary.shareText.contains("Build Log"))
     #expect(summary.shareText.contains("The AI work counter for today."))
     #expect(summary.shareText.contains("No prompts. No keys."))

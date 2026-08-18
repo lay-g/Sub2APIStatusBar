@@ -4,13 +4,13 @@ public enum StatusFormatters {
     public static func compactNumber(_ value: Int64) -> String {
         let number = Double(value)
         if number >= 1_000_000_000_000 {
-            return String(format: "%.1fT", number / 1_000_000_000_000)
+            return String(format: "%.3fT", number / 1_000_000_000_000)
         }
         if number >= 1_000_000_000 {
-            return String(format: "%.1fB", number / 1_000_000_000)
+            return String(format: "%.3fB", number / 1_000_000_000)
         }
         if number >= 1_000_000 {
-            return String(format: "%.1fM", number / 1_000_000)
+            return String(format: "%.3fM", number / 1_000_000)
         }
         if number >= 1_000 {
             return String(format: "%.1fK", number / 1_000)
