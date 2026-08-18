@@ -647,6 +647,12 @@ private func pngSize(_ data: Data) -> (width: Int, height: Int)? {
     #expect(requests.latestDate == "2026-05-18")
 }
 
+@Test func compactNumberFormatsLargeUnits() {
+    #expect(StatusFormatters.compactNumber(1_000_000) == "1.0M")
+    #expect(StatusFormatters.compactNumber(1_260_000_000) == "1.3B")
+    #expect(StatusFormatters.compactNumber(1_260_000_000_000) == "1.3T")
+}
+
 @Test func costPerMillionTokensFormatsUnitEconomics() {
     #expect(StatusFormatters.costPerMillionTokens(cost: 12.5, tokens: 2_500_000) == "$5.00/MTok")
     #expect(StatusFormatters.costPerMillionTokens(cost: 0.0123, tokens: 1_000_000) == "$0.0123/MTok")
