@@ -21,11 +21,30 @@ struct LoginPanel: View {
                     .foregroundStyle(Color.accentColor)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Sub2API")
+                    Text("Sub2API Status Bar")
                         .font(.title2.bold())
                     Text("Connect your server")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            // Provider Selection
+            VStack(alignment: .leading, spacing: 8) {
+                Text("API Provider")
+                    .font(.headline)
+                Picker("Provider", selection: $model.settingsDraft.provider) {
+                    ForEach(APIProvider.allCases) { provider in
+                        Text(provider.displayName).tag(provider)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: model.settingsDraft.provider) { newProvider in
+                    // Update base URL when provider changes
+                    if model.settingsDraft.baseURL == APIProvider.sub2api.defaultBaseURL ||
+                       model.settingsDraft.baseURL == APIProvider.codexProxy.defaultBaseURL {
+                        model.settingsDraft.baseURL = newProvider.defaultBaseURL
+                    }
                 }
             }
 
@@ -40,13 +59,17 @@ struct LoginPanel: View {
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .serverURL)
 
-                TextField("Account", text: $model.loginEmail)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focusedField, equals: .email)
+                // Only show email/password for CodexProxy (user login)
+                // Sub2API uses token-based auth
+                if model.settingsDraft.provider == .codexProxy {
+                    TextField("Username/Email", text: $model.loginEmail)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($focusedField, equals: .email)
 
-                SecureField("Password", text: $model.loginPassword)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focusedField, equals: .password)
+                    SecureField("Password", text: $model.loginPassword)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($focusedField, equals: .password)
+                }
 
                 HStack {
                     Text("Refresh")
@@ -67,32 +90,39 @@ struct LoginPanel: View {
                 MessageRow(message: error)
             }
 
-            Button {
-                model.loginAndSave()
-            } label: {
-                HStack {
-                    if model.isLoggingIn {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "key.fill")
+            // Show different login buttons based on provider
+            if model.settingsDraft.provider == .codexProxy {
+                Button {
+                    model.loginAndSave()
+                } label: {
+                    HStack {
+                        if model.isLoggingIn {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "person.fill")
+                        }
+                        Text(model.isLoggingIn ? "Connecting..." : "Login with Password")
                     }
-                    Text(model.isLoggingIn ? "Connecting..." : "Login")
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!formState.canSubmit || model.isLoggingIn)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(!formState.canSubmit || model.isLoggingIn)
 
             Divider()
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Manual token")
+                Text(model.settingsDraft.provider == .sub2api ? "API Token" : "Manual Session")
                     .font(.headline)
-                SecureField("Bearer Token", text: $model.settingsDraft.authToken)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focusedField, equals: .token)
+                SecureField(
+                    model.settingsDraft.provider == .sub2api ? "Bearer Token" : "Session Cookie",
+                    text: $model.settingsDraft.authToken
+                )
+                .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .token)
+
                 Button {
                     model.settingsDraft.upsertAccount(
                         name: model.loginEmail,

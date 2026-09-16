@@ -53,6 +53,31 @@ public enum MonitorMode: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
+public enum APIProvider: String, Codable, CaseIterable, Identifiable, Sendable {
+    case sub2api
+    case codexProxy
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .sub2api:
+            "Sub2API"
+        case .codexProxy:
+            "Codex Proxy RS"
+        }
+    }
+
+    public var defaultBaseURL: String {
+        switch self {
+        case .sub2api:
+            "http://127.0.0.1:8080"
+        case .codexProxy:
+            "http://127.0.0.1:8080"
+        }
+    }
+}
+
 public enum MenuBarMetric: String, Codable, CaseIterable, Identifiable, Sendable {
     case automatic
     case spend
@@ -261,6 +286,7 @@ public struct StoredAccount: Codable, Identifiable, Equatable, Sendable {
 }
 
 public struct AppConfig: Codable, Equatable, Sendable {
+    public var provider: APIProvider
     public var baseURL: String
     public var authToken: String
     public var refreshToken: String
@@ -275,6 +301,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public var selectedAccountID: String?
 
     public init(
+        provider: APIProvider = .sub2api,
         baseURL: String,
         authToken: String = "",
         refreshToken: String = "",
@@ -288,6 +315,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         accounts: [StoredAccount] = [],
         selectedAccountID: String? = nil
     ) {
+        self.provider = provider
         self.baseURL = baseURL
         self.authToken = authToken
         self.refreshToken = refreshToken
@@ -304,6 +332,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case provider
         case baseURL
         case authToken
         case refreshToken
@@ -320,7 +349,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? "http://127.0.0.1:8080"
+        provider = try container.decodeIfPresent(APIProvider.self, forKey: .provider) ?? .sub2api
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? provider.defaultBaseURL
         authToken = try container.decodeIfPresent(String.self, forKey: .authToken) ?? ""
         refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken) ?? ""
         refreshIntervalSeconds = try container.decodeIfPresent(Double.self, forKey: .refreshIntervalSeconds) ?? 15
@@ -337,6 +367,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(provider, forKey: .provider)
         try container.encode(baseURL, forKey: .baseURL)
         try container.encode(authToken, forKey: .authToken)
         try container.encode(refreshToken, forKey: .refreshToken)
@@ -353,8 +384,10 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     public static func defaults() -> AppConfig {
         let env = ProcessInfo.processInfo.environment
+        let provider = APIProvider(rawValue: (env["SUB2API_PROVIDER"] ?? "sub2api").lowercased()) ?? .sub2api
         return AppConfig(
-            baseURL: env["SUB2API_BASE_URL"] ?? "http://127.0.0.1:8080",
+            provider: provider,
+            baseURL: env["SUB2API_BASE_URL"] ?? provider.defaultBaseURL,
             authToken: env["SUB2API_AUTH_TOKEN"] ?? "",
             refreshToken: env["SUB2API_REFRESH_TOKEN"] ?? "",
             refreshIntervalSeconds: Double(env["SUB2API_REFRESH_SECONDS"] ?? "") ?? 15,
@@ -501,7 +534,23 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public var apiBaseURL: URL? {
         var normalized = self
         normalized.normalize()
-        return URL(string: normalized.baseURL)?.appending(path: "api/v1", directoryHint: .isDirectory)
+
+        switch provider {
+        case .sub2api:
+            return URL(string: normalized.baseURL)?.appending(path: "api/v1", directoryHint: .isDirectory)
+        case .codexProxy:
+            // CodexProxy doesn't use /api/v1 prefix
+            return URL(string: normalized.baseURL)
+        }
+    }
+
+    public var hasUsableCredentials: Bool {
+        switch provider {
+        case .sub2api:
+            return !authToken.isEmpty
+        case .codexProxy:
+            return selectedAccount != nil
+        }
     }
 }
 

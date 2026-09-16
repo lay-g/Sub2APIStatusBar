@@ -58,7 +58,7 @@ final class MonitorViewModel: ObservableObject {
             return
         }
 
-        if config.authToken.isEmpty {
+        if !config.hasUsableCredentials {
             publish(.idle(mode: config.monitorMode))
             return
         }
@@ -66,13 +66,13 @@ final class MonitorViewModel: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        let client = Sub2APIClient(config: config)
+        let provider = DataProviderFactory.create(config: config)
         do {
-            publish(try await userSnapshot(client: client))
+            publish(try await userSnapshot(provider: provider))
         } catch {
             if await refreshAuthTokenIfNeeded(after: error) {
                 do {
-                    publish(try await userSnapshot(client: Sub2APIClient(config: config)))
+                    publish(try await userSnapshot(provider: DataProviderFactory.create(config: config)))
                     return
                 } catch {
                     publishDisconnected(error)
@@ -83,21 +83,23 @@ final class MonitorViewModel: ObservableObject {
         }
     }
 
-    private func userSnapshot(client: Sub2APIClient) async throws -> MonitorSnapshot {
-        let currentUser = try? await client.currentUser().user
-        async let summaryTask = client.subscriptionSummary()
-        async let detailsTask = client.subscriptions()
-        async let statsTask = client.usageDashboardStats()
+    private func userSnapshot(provider: DataProvider) async throws -> MonitorSnapshot {
+        let currentUser = try? await provider.fetchCurrentUser()
+        async let summaryTask = provider.fetchSubscriptionSummary()
+        async let statsTask = provider.fetchDashboardStats()
         let range = Self.lastSevenDayRange()
-        async let trendTask = client.usageDashboardTrend(startDate: range.start, endDate: range.end, granularity: "day")
-        async let modelsTask = client.usageDashboardModels(startDate: range.start, endDate: range.end)
+        async let trendTask = provider.fetchUsageTrend(startDate: range.start, endDate: range.end, granularity: "day")
+        async let modelsTask = provider.fetchModelUsage(startDate: range.start, endDate: range.end)
+        async let realtimeTask = provider.fetchRealtimeMetrics()
+        async let accountHealthTask = provider.fetchAccountHealth()
 
-        var summary = try await summaryTask
-        let details = try? await detailsTask
-        summary.applyResetWindows(from: details ?? [])
+        let summary = try await summaryTask
         let stats = try? await statsTask
         let trend = try? await trendTask
         let models = try? await modelsTask
+        let realtime = try? await realtimeTask
+        let accountHealth = try? await accountHealthTask
+
         return MonitorSnapshot(
             mode: .user,
             connected: true,
@@ -105,8 +107,8 @@ final class MonitorViewModel: ObservableObject {
             stats: stats,
             trend: trend?.trend,
             modelDistribution: models?.models,
-            realtime: nil,
-            accountHealth: nil,
+            realtime: realtime,
+            accountHealth: accountHealth,
             subscriptionSummary: summary,
             lastUpdatedAt: Date(),
             message: nil
@@ -114,6 +116,11 @@ final class MonitorViewModel: ObservableObject {
     }
 
     private func refreshAuthTokenIfNeeded(after error: Error) async -> Bool {
+        // Only Sub2API supports token refresh
+        guard config.provider == .sub2api else {
+            return false
+        }
+
         guard let apiError = error as? Sub2APIError,
               apiError.isUnauthorized,
               !config.refreshToken.isEmpty else {
@@ -190,10 +197,10 @@ final class MonitorViewModel: ObservableObject {
             settingsDraft = loaded
             loginEmail = loaded.selectedAccount?.email ?? ""
             loginPassword = ""
-            if loaded.authToken.isEmpty {
-                publish(.idle(mode: loaded.monitorMode))
-            } else {
+            if loaded.hasUsableCredentials {
                 refresh()
+            } else {
+                publish(.idle(mode: loaded.monitorMode))
             }
         } catch {
             settingsError = error.localizedDescription
@@ -213,10 +220,10 @@ final class MonitorViewModel: ObservableObject {
             loginEmail = loaded.selectedAccount?.email ?? ""
             loginPassword = ""
             onSnapshotChange?(snapshot)
-            if loaded.authToken.isEmpty {
-                publish(.idle(mode: loaded.monitorMode))
-            } else {
+            if loaded.hasUsableCredentials {
                 refresh()
+            } else {
+                publish(.idle(mode: loaded.monitorMode))
             }
         } catch {
             settingsError = error.localizedDescription
@@ -227,22 +234,40 @@ final class MonitorViewModel: ObservableObject {
         settingsError = nil
         var draft = settingsDraft
         draft.authToken = ""
-        let client = Sub2APIClient(config: draft)
+
         Task {
             isLoggingIn = true
             defer { isLoggingIn = false }
+
             do {
-                let response = try await client.login(email: loginEmail, password: loginPassword)
-                let tokens = StoredAuthTokens(authToken: response.accessToken, refreshToken: response.refreshToken ?? "")
-                let displayName = response.user?.username ?? loginEmail
-                settingsDraft.upsertAccount(
-                    name: displayName,
-                    email: response.user?.email ?? loginEmail,
-                    baseURL: draft.baseURL,
-                    tokens: tokens
-                )
-                loginPassword = ""
-                saveSettings()
+                switch draft.provider {
+                case .sub2api:
+                    // Sub2API login flow
+                    let client = Sub2APIClient(config: draft)
+                    let response = try await client.login(email: loginEmail, password: loginPassword)
+                    let tokens = StoredAuthTokens(authToken: response.accessToken, refreshToken: response.refreshToken ?? "")
+                    let displayName = response.user?.username ?? loginEmail
+                    settingsDraft.upsertAccount(
+                        name: displayName,
+                        email: response.user?.email ?? loginEmail,
+                        baseURL: draft.baseURL,
+                        tokens: tokens
+                    )
+                    loginPassword = ""
+                    saveSettings()
+
+                case .codexProxy:
+                    let client = CodexProxyClient(config: draft)
+                    _ = try await client.login(username: loginEmail, password: loginPassword)
+                    settingsDraft.upsertAccount(
+                        name: loginEmail,
+                        email: loginEmail,
+                        baseURL: draft.baseURL,
+                        tokens: StoredAuthTokens()
+                    )
+                    loginPassword = ""
+                    saveSettings()
+                }
             } catch {
                 settingsError = error.localizedDescription
             }

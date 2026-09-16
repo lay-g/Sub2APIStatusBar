@@ -7,7 +7,7 @@ struct MonitorPanel: View {
 
     var body: some View {
         Group {
-            if model.config.authToken.isEmpty {
+            if !model.config.hasUsableCredentials {
                 LoginPanel(model: model)
             } else {
                 ZStack {
@@ -124,7 +124,7 @@ struct MonitorPanel: View {
 
     private var statusSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if model.config.authToken.isEmpty {
+            if !model.config.hasUsableCredentials {
                 Text("Set Base URL and token to start monitoring.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
