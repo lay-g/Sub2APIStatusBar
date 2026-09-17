@@ -116,11 +116,15 @@ final class MonitorViewModel: ObservableObject {
     }
 
     private func refreshAuthTokenIfNeeded(after error: Error) async -> Bool {
-        // Only Sub2API supports token refresh
-        guard config.provider == .sub2api else {
-            return false
+        switch config.provider {
+        case .sub2api:
+            return await refreshSub2APIToken(after: error)
+        case .codexProxy:
+            return await reloginCodexProxy(after: error)
         }
+    }
 
+    private func refreshSub2APIToken(after error: Error) async -> Bool {
         guard let apiError = error as? Sub2APIError,
               apiError.isUnauthorized,
               !config.refreshToken.isEmpty else {
@@ -134,6 +138,40 @@ final class MonitorViewModel: ObservableObject {
             var next = config
             next.authToken = response.accessToken
             next.refreshToken = response.refreshToken ?? config.refreshToken
+            try store.save(next)
+            let loaded = store.load()
+            config = loaded
+            settingsDraft = loaded
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// codex-proxy-rs issues 24h session cookies with no refresh token, so an
+    /// expired session is recovered by logging in again with the stored password.
+    private func reloginCodexProxy(after error: Error) async -> Bool {
+        guard let apiError = error as? CodexProxyError,
+              apiError.isUnauthorized,
+              !config.password.isEmpty,
+              let account = config.selectedAccount else {
+            return false
+        }
+
+        let username = account.email.isEmpty ? account.name : account.email
+        guard !username.isEmpty else {
+            return false
+        }
+
+        var loginConfig = config
+        loginConfig.authToken = ""
+        do {
+            let session = try await CodexProxyClient(config: loginConfig).login(
+                username: username,
+                password: config.password
+            )
+            var next = config
+            next.authToken = session.cookie
             try store.save(next)
             let loaded = store.load()
             config = loaded
@@ -257,13 +295,25 @@ final class MonitorViewModel: ObservableObject {
                     saveSettings()
 
                 case .codexProxy:
-                    let client = CodexProxyClient(config: draft)
-                    _ = try await client.login(username: loginEmail, password: loginPassword)
+                    let username = loginEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let password = loginPassword
+                    let session = try await CodexProxyClient(config: draft).login(
+                        username: username,
+                        password: password
+                    )
+
+                    // Replay the new cookie once to confirm it works and to pick up
+                    // the account's real id and display name.
+                    var sessionConfig = draft
+                    sessionConfig.authToken = session.cookie
+                    let status = try? await CodexProxyClient(config: sessionConfig).authStatus()
+                    let accountID = status?.user?.id ?? username
+
                     settingsDraft.upsertAccount(
-                        name: loginEmail,
-                        email: loginEmail,
+                        name: status?.user?.username ?? username,
+                        email: accountID,
                         baseURL: draft.baseURL,
-                        tokens: StoredAuthTokens()
+                        tokens: StoredAuthTokens(authToken: session.cookie, password: password)
                     )
                     loginPassword = ""
                     saveSettings()

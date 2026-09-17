@@ -22,9 +22,6 @@ public protocol DataProvider: Sendable {
 
     /// Fetch account health summary
     func fetchAccountHealth() async throws -> AccountHealthSummary?
-
-    /// Refresh authentication token
-    func refreshAuthToken(_ refreshToken: String) async throws -> AuthResponse
 }
 
 // MARK: - Sub2API Provider
@@ -66,123 +63,116 @@ public struct Sub2APIDataProvider: DataProvider {
         // Sub2API doesn't expose account health in user mode
         nil
     }
-
-    public func refreshAuthToken(_ refreshToken: String) async throws -> AuthResponse {
-        try await client.refreshToken(refreshToken)
-    }
 }
 
 // MARK: - CodexProxy Provider
 
 public struct CodexProxyDataProvider: DataProvider {
-    private let client: CodexProxyClient
-    private var cachedProfile: CodexProxyUserProfile?
+    private let cache: CodexProxyRequestCache
+    private let now: @Sendable () -> Date
 
-    public init(config: AppConfig, session: URLSession = .shared) {
-        self.client = CodexProxyClient(config: config, session: session)
+    public init(
+        config: AppConfig,
+        session: URLSession = CodexProxyClient.defaultSession,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.cache = CodexProxyRequestCache(
+            client: CodexProxyClient(config: config, session: session),
+            now: now
+        )
+        self.now = now
     }
 
     public func fetchCurrentUser() async throws -> CurrentUser? {
-        let profile = try await client.userProfile()
+        let profile = try await cache.profile()
         return CodexProxyAdapters.toCurrentUser(profile)
     }
 
     public func fetchSubscriptionSummary() async throws -> SubscriptionSummary {
-        let profile = try await client.userProfile()
+        let profile = try await cache.profile()
         return CodexProxyAdapters.toSubscriptionSummary(profile)
     }
 
     public func fetchDashboardStats() async throws -> DashboardStats {
-        let profile = try await client.userProfile()
-        let endDate = Date()
-        let startDate = Calendar.current.date(byAdding: .day, value: -1, to: endDate) ?? endDate
+        // One instant shared by both windows so their end boundaries match.
+        let instant = now()
+        let today = CodexProxyDate.todayWindow(now: instant)
+        let month = CodexProxyDate.monthToDateWindow(now: instant)
 
-        let summary = try await client.usageSummary(startTime: startDate, endTime: endDate)
-        let realtimeUsage = try? await client.requestUsage()
+        async let profileTask = cache.profile()
+        async let todayTask = cache.summary(startTime: today.start, endTime: today.end)
+        async let monthTask = cache.summary(startTime: month.start, endTime: month.end)
+        async let realtimeUsageTask = cache.requestUsage()
+        async let overviewTask = cache.realtimeOverview()
 
+        let profile = try await profileTask
         return CodexProxyAdapters.toDashboardStats(
-            summary: summary,
+            todaySummary: try await todayTask,
+            monthSummary: try await monthTask,
             profile: profile,
-            realtimeUsage: realtimeUsage
+            realtimeUsage: (try? await realtimeUsageTask)?.entry(for: profile.id),
+            realtimeOverview: try? await overviewTask
         )
     }
 
     public func fetchUsageTrend(startDate: String, endDate: String, granularity: String) async throws -> DashboardTrendResponse {
-        let formatter = ISO8601DateFormatter()
-        guard let start = formatter.date(from: startDate),
-              let end = formatter.date(from: endDate) else {
-            throw CodexProxyError.invalidBaseURL
+        guard let range = CodexProxyDate.rangeBoundaries(start: startDate, end: endDate) else {
+            throw CodexProxyError.invalidDateRange(startDate, endDate)
         }
 
-        let overview = try await client.usageOverview(startTime: start, endTime: end)
-        let trendPoints = CodexProxyAdapters.toTrendDataPoints(overview.trend)
+        let overview = try await cache.overview(startTime: range.start, endTime: range.end)
 
         return DashboardTrendResponse(
             startDate: startDate,
             endDate: endDate,
             granularity: granularity,
-            trend: trendPoints
+            trend: CodexProxyAdapters.toTrendDataPoints(overview)
         )
     }
 
     public func fetchModelUsage(startDate: String, endDate: String) async throws -> DashboardModelsResponse {
-        let formatter = ISO8601DateFormatter()
-        guard let start = formatter.date(from: startDate),
-              let end = formatter.date(from: endDate) else {
-            throw CodexProxyError.invalidBaseURL
+        guard let range = CodexProxyDate.rangeBoundaries(start: startDate, end: endDate) else {
+            throw CodexProxyError.invalidDateRange(startDate, endDate)
         }
 
-        let records = try await client.usageRecords(
-            startTime: start,
-            endTime: end,
-            currentPage: 1,
-            pageSize: 1000  // Fetch more records for aggregation
+        let diagnostics = try await cache.diagnostics(
+            startTime: range.start,
+            endTime: range.end,
+            dimension: "model"
         )
-
-        let models = CodexProxyAdapters.toModelUsageSummaries(records.items)
 
         return DashboardModelsResponse(
             startDate: startDate,
             endDate: endDate,
-            models: models
+            models: CodexProxyAdapters.toModelUsageSummaries(diagnostics.items)
         )
     }
 
     public func fetchRealtimeMetrics() async throws -> RealtimeMetrics? {
-        let requestUsage = try await client.requestUsage()
-
-        // Get recent trend for average response time calculation
-        let endDate = Date()
-        let startDate = Calendar.current.date(byAdding: .hour, value: -1, to: endDate) ?? endDate
-        let overview = try? await client.usageOverview(startTime: startDate, endTime: endDate)
+        let usage = try await cache.requestUsage()
+        let overview = try? await cache.realtimeOverview()
 
         return CodexProxyAdapters.toRealtimeMetrics(
-            requestUsage: requestUsage,
-            trend: overview?.trend ?? []
+            requestUsage: usage.entry(for: (try? await cache.profile())?.id),
+            overview: overview
         )
     }
 
     public func fetchAccountHealth() async throws -> AccountHealthSummary? {
-        // CodexProxy doesn't expose account health to regular users
+        // Upstream account health is admin-only in codex-proxy-rs
         nil
-    }
-
-    public func refreshAuthToken(_ refreshToken: String) async throws -> AuthResponse {
-        // CodexProxy uses session cookies, not refresh tokens
-        // This should trigger a re-login instead
-        throw CodexProxyError.api(code: 401, message: "Session expired, please login again")
     }
 }
 
 // MARK: - Provider Factory
 
 public enum DataProviderFactory {
-    public static func create(config: AppConfig, session: URLSession = .shared) -> DataProvider {
+    public static func create(config: AppConfig, session: URLSession? = nil) -> DataProvider {
         switch config.provider {
         case .sub2api:
-            return Sub2APIDataProvider(config: config, session: session)
+            return Sub2APIDataProvider(config: config, session: session ?? .shared)
         case .codexProxy:
-            return CodexProxyDataProvider(config: config, session: session)
+            return CodexProxyDataProvider(config: config, session: session ?? CodexProxyClient.defaultSession)
         }
     }
 }

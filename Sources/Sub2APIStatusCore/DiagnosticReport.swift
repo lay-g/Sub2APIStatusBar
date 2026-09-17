@@ -17,6 +17,7 @@ public enum DiagnosticReport {
             "Status: \(snapshot.statusLabel(now: now, refreshIntervalSeconds: config.refreshIntervalSeconds))",
             "Connected: \(snapshot.connected ? "yes" : "no")",
             "Data Freshness: \(isStale ? "stale" : "fresh")",
+            "Provider: \(config.provider.displayName)",
             "Base URL: \(config.baseURL)",
             "Refresh Interval: \(Int(config.refreshIntervalSeconds))s",
             "Menu Bar Text: \(config.showsMenuBarText ? "shown" : "hidden")",
@@ -31,6 +32,7 @@ public enum DiagnosticReport {
             "Selected Account: \(config.selectedAccount?.displayName ?? "none")",
             "Access Token: \(config.authToken.isEmpty ? "missing" : "present")",
             "Refresh Token: \(config.refreshToken.isEmpty ? "missing" : "present")",
+            "Saved Password: \(config.password.isEmpty ? "missing" : "present")",
         ]
 
         if let stats = snapshot.stats {

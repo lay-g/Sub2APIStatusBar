@@ -1,19 +1,65 @@
 import Foundation
 
 public struct CodexProxyClient: Sendable {
+    public static let sessionCookieName = "cpr_admin_session"
+
+    /// codex-proxy-rs hands out its credential as an HttpOnly session cookie. The
+    /// client replays that cookie itself, so automatic cookie handling is turned
+    /// off to keep the shared jar from overriding the header we set.
+    public static let defaultSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
+    }()
+
     public var config: AppConfig
     public var session: URLSession
 
-    public init(config: AppConfig, session: URLSession = .shared) {
+    public init(config: AppConfig, session: URLSession = CodexProxyClient.defaultSession) {
         self.config = config
         self.session = session
     }
 
     // MARK: - Authentication
 
-    /// Login with username and password (for user role)
-    public func login(username: String, password: String) async throws -> CodexProxyAuthResponse {
-        try await post("/api/admin/auth/login", body: CodexProxyLoginRequest(username: username, password: password))
+    /// Login with username and password (for user role).
+    ///
+    /// The response body carries no token; the credential is the
+    /// `cpr_admin_session` cookie, which is returned here so the caller can persist it.
+    public func login(username: String, password: String) async throws -> CodexProxySession {
+        var request = try makeRequest(path: "/api/admin/auth/login")
+        request.httpMethod = "POST"
+        request.httpBody = try JSONEncoder.codexProxy.encode(
+            CodexProxyLoginRequest(username: username, password: password)
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let (data, httpResponse) = try await sendRaw(request)
+
+        guard let cookie = Self.sessionCookie(in: httpResponse) else {
+            throw CodexProxyError.missingSessionCookie
+        }
+
+        let expiresAt = try? JSONDecoder.codexProxy
+            .decode(CodexProxyEnvelope<CodexProxyAuthResponse>.self, from: data)
+            .value()
+            .expiresAt
+
+        return CodexProxySession(cookie: cookie, expiresAt: expiresAt)
+    }
+
+    /// Extracts the session cookie value from a response's `Set-Cookie` headers.
+    static func sessionCookie(in response: HTTPURLResponse) -> String? {
+        guard let url = response.url,
+              let headers = response.allHeaderFields as? [String: String] else {
+            return nil
+        }
+        return HTTPCookie
+            .cookies(withResponseHeaderFields: headers, for: url)
+            .first { $0.name == sessionCookieName }?
+            .value
     }
 
     /// Get current authentication status
@@ -192,12 +238,12 @@ public struct CodexProxyClient: Sendable {
         return try await get("/api/user/usage/insights/overview", query: query)
     }
 
-    /// Get usage diagnostics
+    /// Get usage diagnostics, aggregated server side by model or provider
     public func usageDiagnostics(
         startTime: Date,
         endTime: Date,
         dimension: String = "model"
-    ) async throws -> CodexProxyUsageOverview {
+    ) async throws -> CodexProxyDiagnosticsResponse {
         let formatter = ISO8601DateFormatter()
         let query: [URLQueryItem] = [
             URLQueryItem(name: "startTime", value: formatter.string(from: startTime)),
@@ -207,8 +253,9 @@ public struct CodexProxyClient: Sendable {
         return try await get("/api/user/usage/insights/diagnostics", query: query)
     }
 
-    /// Get real-time request usage (concurrency and RPM)
-    public func requestUsage() async throws -> CodexProxyRequestUsage {
+    /// Get real-time request usage (concurrency and RPM).
+    /// Returns one entry per user.
+    public func requestUsage() async throws -> [CodexProxyRequestUsage] {
         try await get("/api/user/request-usage")
     }
 
@@ -246,17 +293,47 @@ public struct CodexProxyClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         if !config.authToken.isEmpty {
-            request.setValue("cpr_admin_session=\(config.authToken)", forHTTPHeaderField: "Cookie")
+            request.setValue("\(Self.sessionCookieName)=\(config.authToken)", forHTTPHeaderField: "Cookie")
         }
         return request
     }
 
-    private func send<Value: Decodable & Sendable>(_ request: URLRequest) async throws -> Value {
+    private func sendRaw(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let message = String(data: data, encoding: .utf8) ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
-            throw CodexProxyError.badStatus(http.statusCode, message)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw CodexProxyError.badStatus(-1, String(data: data, encoding: .utf8) ?? "")
         }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw Self.error(status: httpResponse.statusCode, data: data)
+        }
+
+        return (data, httpResponse)
+    }
+
+    /// Failures arrive as envelopes too, e.g.
+    /// `{"code":40102,"message":"用户名或密码错误","data":null}`, so surface the
+    /// server's own message rather than the raw body.
+    private static func error(status: Int, data: Data) -> CodexProxyError {
+        struct ErrorEnvelope: Decodable {
+            let code: Int?
+            let message: String?
+        }
+
+        if let envelope = try? JSONDecoder.codexProxy.decode(ErrorEnvelope.self, from: data),
+           let message = envelope.message?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !message.isEmpty {
+            return .api(code: envelope.code ?? status, message: message)
+        }
+
+        let body = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return .badStatus(status, body?.isEmpty == false ? body! : HTTPURLResponse.localizedString(forStatusCode: status))
+    }
+
+    private func send<Value: Decodable & Sendable>(_ request: URLRequest) async throws -> Value {
+        let (data, _) = try await sendRaw(request)
 
         let decoder = JSONDecoder.codexProxy
         if let envelope = try? decoder.decode(CodexProxyEnvelope<Value>.self, from: data) {
@@ -273,18 +350,18 @@ private struct EmptyBody: Encodable, Sendable {}
 // MARK: - JSON Coding Extensions
 
 extension JSONEncoder {
+    /// codex-proxy-rs uses camelCase request bodies.
     static let codexProxy: JSONEncoder = {
         let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.dateEncodingStrategy = .iso8601
         return encoder
     }()
 }
 
 extension JSONDecoder {
+    /// codex-proxy-rs uses camelCase response bodies.
     static let codexProxy: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()

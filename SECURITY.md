@@ -29,15 +29,17 @@ Do not share:
 - Private Sub2API server logs
 - Full local Application Support directories
 
-Settings > Diagnostics > Copy Diagnostics is the preferred support artifact. It reports whether tokens are present without including token values.
+Settings > Diagnostics > Copy Diagnostics is the preferred support artifact. It reports whether credentials are present without including token or password values.
 
 ## Current Security Posture
 
 Sub2API Status Bar stores server URLs, account metadata, auth tokens, refresh tokens, display preferences, and refresh interval locally in Application Support. It does not use macOS Keychain in the current release line.
 
+For Codex Proxy RS accounts the login password is stored in the same plaintext `config.json`. That provider issues session cookies that expire after 24 hours and offers no refresh token, so the password is retained to re-authenticate without prompting. Delete the account (Settings > Login > Remove Current Account) to clear it. Sub2API accounts never store a password.
+
 The app sends network requests only to:
 
-- The configured Sub2API server.
+- The configured Sub2API or Codex Proxy RS server.
 - GitHub Releases when update checking is enabled by normal app behavior.
 
 Release archives are zip files with SHA-256 checksums. Public trust for broad distribution still depends on Developer ID signing and Apple notarization credentials.

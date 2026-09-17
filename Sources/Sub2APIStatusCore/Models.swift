@@ -414,11 +414,16 @@ public struct ModelUsageDisplay: Identifiable, Equatable, Sendable {
 
         return visibleModels.map { item in
             let costShare = totalCost > 0 ? item.actualCost / totalCost : 0
+            // Providers that aggregate server side may only report a combined
+            // token count; showing "In 0 / Out 0" there would be misleading.
+            let hasTokenSplit = item.inputTokens > 0 || item.outputTokens > 0
             return ModelUsageDisplay(
                 model: item.model,
                 requestsText: "\(StatusFormatters.menuBarCount(item.requests)) requests",
                 tokensText: StatusFormatters.compactNumber(item.totalTokens),
-                tokenMixText: "In \(StatusFormatters.compactNumber(item.inputTokens)) / Out \(StatusFormatters.compactNumber(item.outputTokens))",
+                tokenMixText: hasTokenSplit
+                    ? "In \(StatusFormatters.compactNumber(item.inputTokens)) / Out \(StatusFormatters.compactNumber(item.outputTokens))"
+                    : "",
                 costText: StatusFormatters.preciseCurrency(item.actualCost),
                 costShareText: "\(StatusFormatters.percent(costShare)) cost",
                 costPerMillionTokensText: StatusFormatters.costPerMillionTokens(cost: item.actualCost, tokens: item.totalTokens),

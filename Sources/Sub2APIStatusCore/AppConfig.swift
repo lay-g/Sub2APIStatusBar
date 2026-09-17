@@ -232,6 +232,7 @@ public struct StoredAccount: Codable, Identifiable, Equatable, Sendable {
     public var baseURL: String
     public var authToken: String
     public var refreshToken: String
+    public var password: String
 
     public init(
         id: String = UUID().uuidString,
@@ -239,7 +240,8 @@ public struct StoredAccount: Codable, Identifiable, Equatable, Sendable {
         email: String = "",
         baseURL: String,
         authToken: String = "",
-        refreshToken: String = ""
+        refreshToken: String = "",
+        password: String = ""
     ) {
         self.id = id
         self.name = name
@@ -247,7 +249,41 @@ public struct StoredAccount: Codable, Identifiable, Equatable, Sendable {
         self.baseURL = baseURL
         self.authToken = authToken
         self.refreshToken = refreshToken
+        self.password = password
         normalize()
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case email
+        case baseURL
+        case authToken
+        case refreshToken
+        case password
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        email = try container.decodeIfPresent(String.self, forKey: .email) ?? ""
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        authToken = try container.decodeIfPresent(String.self, forKey: .authToken) ?? ""
+        refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken) ?? ""
+        password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
+        normalize()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(email, forKey: .email)
+        try container.encode(baseURL, forKey: .baseURL)
+        try container.encode(authToken, forKey: .authToken)
+        try container.encode(refreshToken, forKey: .refreshToken)
+        try container.encode(password, forKey: .password)
     }
 
     public mutating func normalize() {
@@ -281,7 +317,7 @@ public struct StoredAccount: Codable, Identifiable, Equatable, Sendable {
     }
 
     public var storedTokens: StoredAuthTokens {
-        StoredAuthTokens(authToken: authToken, refreshToken: refreshToken)
+        StoredAuthTokens(authToken: authToken, refreshToken: refreshToken, password: password)
     }
 }
 
@@ -290,6 +326,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public var baseURL: String
     public var authToken: String
     public var refreshToken: String
+    /// Mirrors the selected account's password; used by Codex Proxy RS to
+    /// re-authenticate when its session cookie expires.
+    public var password: String
     public var refreshIntervalSeconds: Double
     public var language: AppLanguage
     public var monitorMode: MonitorMode
@@ -305,6 +344,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         baseURL: String,
         authToken: String = "",
         refreshToken: String = "",
+        password: String = "",
         refreshIntervalSeconds: Double = 15,
         language: AppLanguage = .auto,
         monitorMode: MonitorMode = .user,
@@ -319,6 +359,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.baseURL = baseURL
         self.authToken = authToken
         self.refreshToken = refreshToken
+        self.password = password
         self.refreshIntervalSeconds = refreshIntervalSeconds
         self.language = language
         self.monitorMode = monitorMode
@@ -336,6 +377,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         case baseURL
         case authToken
         case refreshToken
+        case password
         case refreshIntervalSeconds
         case language
         case monitorMode
@@ -353,6 +395,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? provider.defaultBaseURL
         authToken = try container.decodeIfPresent(String.self, forKey: .authToken) ?? ""
         refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken) ?? ""
+        password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
         refreshIntervalSeconds = try container.decodeIfPresent(Double.self, forKey: .refreshIntervalSeconds) ?? 15
         language = try container.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .auto
         monitorMode = try container.decodeIfPresent(MonitorMode.self, forKey: .monitorMode) ?? .user
@@ -371,6 +414,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         try container.encode(baseURL, forKey: .baseURL)
         try container.encode(authToken, forKey: .authToken)
         try container.encode(refreshToken, forKey: .refreshToken)
+        try container.encode(password, forKey: .password)
         try container.encode(refreshIntervalSeconds, forKey: .refreshIntervalSeconds)
         try container.encode(language, forKey: .language)
         try container.encode(monitorMode, forKey: .monitorMode)
@@ -433,6 +477,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public mutating func clearAuthTokens() {
         authToken = ""
         refreshToken = ""
+        password = ""
     }
 
     public var selectedAccount: StoredAccount? {
@@ -486,6 +531,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
             if let tokens {
                 accounts[index].authToken = tokens.authToken
                 accounts[index].refreshToken = tokens.refreshToken
+                accounts[index].password = tokens.password
             }
             accounts[index].normalize()
         } else {
@@ -494,7 +540,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
                 email: accountEmail,
                 baseURL: accountBaseURL,
                 authToken: tokens?.authToken ?? "",
-                refreshToken: tokens?.refreshToken ?? ""
+                refreshToken: tokens?.refreshToken ?? "",
+                password: tokens?.password ?? ""
             )
             account.normalize()
             accounts.append(account)
@@ -506,6 +553,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         if let tokens {
             authToken = tokens.authToken
             refreshToken = tokens.refreshToken
+            password = tokens.password
         }
         normalize()
         return accounts[index].id
@@ -516,6 +564,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         applySelectedAccountBaseURL()
         authToken = tokens.authToken
         refreshToken = tokens.refreshToken
+        password = tokens.password
         normalize()
         applySelectedAccountBaseURL()
     }
@@ -549,7 +598,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
         case .sub2api:
             return !authToken.isEmpty
         case .codexProxy:
-            return selectedAccount != nil
+            // authToken holds the cpr_admin_session cookie; the password lets the
+            // client re-authenticate once that session expires.
+            return !authToken.isEmpty || !password.isEmpty
         }
     }
 }
@@ -557,14 +608,18 @@ public struct AppConfig: Codable, Equatable, Sendable {
 public struct StoredAuthTokens: Equatable, Sendable {
     public var authToken: String
     public var refreshToken: String
+    /// Codex Proxy RS sessions expire after 24h, so the password is kept to
+    /// re-authenticate without prompting. Unused by Sub2API.
+    public var password: String
 
-    public init(authToken: String = "", refreshToken: String = "") {
+    public init(authToken: String = "", refreshToken: String = "", password: String = "") {
         self.authToken = authToken.trimmingCharacters(in: .whitespacesAndNewlines)
         self.refreshToken = refreshToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.password = password
     }
 
     public var isEmpty: Bool {
-        authToken.isEmpty && refreshToken.isEmpty
+        authToken.isEmpty && refreshToken.isEmpty && password.isEmpty
     }
 }
 
@@ -608,7 +663,11 @@ public final class ConfigStore: Sendable {
             return defaults
         }
 
-        let topLevelTokens = StoredAuthTokens(authToken: decoded.authToken, refreshToken: decoded.refreshToken)
+        let topLevelTokens = StoredAuthTokens(
+            authToken: decoded.authToken,
+            refreshToken: decoded.refreshToken,
+            password: decoded.password
+        )
         decoded.normalize()
 
         if decoded.accounts.isEmpty, !topLevelTokens.isEmpty {
@@ -630,7 +689,11 @@ public final class ConfigStore: Sendable {
     public func save(_ config: AppConfig) throws {
         var normalized = config
         normalized.normalize()
-        let tokens = StoredAuthTokens(authToken: normalized.authToken, refreshToken: normalized.refreshToken)
+        let tokens = StoredAuthTokens(
+            authToken: normalized.authToken,
+            refreshToken: normalized.refreshToken,
+            password: normalized.password
+        )
         if normalized.selectedAccountID == nil, !tokens.isEmpty {
             normalized.upsertAccount(name: "Default Account", baseURL: normalized.baseURL, tokens: tokens)
         } else {
@@ -676,6 +739,7 @@ public final class ConfigStore: Sendable {
         }
         config.accounts[index].authToken = tokens.authToken
         config.accounts[index].refreshToken = tokens.refreshToken
+        config.accounts[index].password = tokens.password
         config.accounts[index].normalize()
     }
 }

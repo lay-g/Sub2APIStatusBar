@@ -128,7 +128,11 @@ struct LoginPanel: View {
                         name: model.loginEmail,
                         email: model.loginEmail,
                         baseURL: model.settingsDraft.baseURL,
-                        tokens: StoredAuthTokens(authToken: model.settingsDraft.authToken, refreshToken: model.settingsDraft.refreshToken)
+                        tokens: StoredAuthTokens(
+                            authToken: model.settingsDraft.authToken,
+                            refreshToken: model.settingsDraft.refreshToken,
+                            password: model.settingsDraft.password
+                        )
                     )
                     model.saveSettings()
                 } label: {
